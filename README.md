@@ -8,7 +8,7 @@ A real-time fleet tracking system demonstrating distributed systems architecture
 
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────┐     ┌──────────────┐
-│   Vehicles   │────▶│  Mosquitto   │────▶│    Kafka     │────▶│Processor │────▶│    Redis     │
+│   Vehicles   │───▶   Mosquitto     ───▶│    Kafka     │───▶│Processor │───▶ │    Redis     │
 │  (Simulator) │     │ (MQTT Broker)│     │  (Stream)    │     │(Consumer)│     │  (Live)      │
 └──────────────┘     └──────────────┘     └──────────────┘     └────┬─────┘     └──────┬───────┘
                                                                     │                   │
