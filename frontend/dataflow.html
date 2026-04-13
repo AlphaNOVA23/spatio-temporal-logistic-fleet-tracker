@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fleet Tracker — Data Flow Visualiser</title>
+    <meta name="description" content="Live animated data pipeline visualisation for the distributed fleet tracking system" />
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+    <style>
+        /* ================================================================
+           Dark theme matching main dashboard
+           ================================================================ */
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-card: #12121a;
+            --bg-glass: rgba(18, 18, 26, 0.9);
+            --border: rgba(255, 255, 255, 0.06);
+            --text-primary: #e8e8ed;
+            --text-secondary: #8b8b9e;
+            --text-muted: #555566;
+            --font-sans: 'Inter', -apple-system, sans-serif;
+            --font-mono: 'JetBrains Mono', 'Consolas', monospace;
+
+            /* Pipeline layer colors */
+            --color-vehicles: #2dd4bf;
+            --color-mqtt: #3b82f6;
+            --color-kafka: #8b5cf6;
+            --color-processor: #f59e0b;
+            --color-redis: #22c55e;
+            --color-timescale: #22c55e;
+            --color-api: #f97316;
+            --color-dashboard: #f97316;
+            --color-breach: #ef4444;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--font-sans);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* ================================================================
+           Top Bar
+           ================================================================ */
+        .top-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-glass);
+            backdrop-filter: blur(20px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .top-bar h1 {
+            font-size: 16px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .top-bar h1 .icon { font-size: 20px; }
+
+        .top-bar .back-link {
+            color: var(--color-vehicles);
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        .top-bar .back-link:hover { text-decoration: underline; }
+
+        .top-bar .uptime {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        /* ================================================================
+           Pipeline Canvas Area
+           ================================================================ */
+        #pipeline-section {
+            padding: 32px 24px 16px;
+            position: relative;
+        }
+
+        #pipeline-canvas {
+            width: 100%;
+            height: 200px;
+            display: block;
+        }
+
+        /* ================================================================
+           Breach Panel — Bottom right overlay
+           ================================================================ */
+        #breach-section {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            width: 340px;
+            max-height: 300px;
+            z-index: 50;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            pointer-events: none;
+        }
+
+        .breach-title {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--color-breach);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 0 4px;
+            pointer-events: auto;
+        }
+
+        .breach-card {
+            background: var(--bg-glass);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            border-left: 3px solid var(--color-breach);
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 12px;
+            transition: all 0.2s ease;
+            pointer-events: auto;
+        }
+
+        .breach-card.flash {
+            animation: breachFlash 0.6s ease-out;
+        }
+
+        @keyframes breachFlash {
+            0% { background: rgba(239, 68, 68, 0.5); transform: scale(1.02); }
+            100% { background: var(--bg-glass); transform: scale(1); }
+        }
+
+        .breach-vid { font-family: var(--font-mono); font-weight: 600; color: var(--color-breach); }
+        .breach-time { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+        /* ================================================================
+           Per-Vehicle Activity Strip
+           ================================================================ */
+        #activity-section {
+            padding: 0 24px 24px;
+        }
+
+        .section-title {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+
+        #vehicle-strips {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .vehicle-strip {
+            display: grid;
+            grid-template-columns: 60px 1fr 70px 12px;
+            align-items: center;
+            gap: 12px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            background: rgba(255,255,255,0.015);
+            transition: background 0.2s;
+        }
+
+        .vehicle-strip:hover {
+            background: rgba(255,255,255,0.035);
+        }
+
+        .strip-vid {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .strip-sparkline {
+            height: 28px;
+            width: 100%;
+        }
+
+        .strip-speed {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 500;
+            text-align: right;
+        }
+
+        .strip-speed .unit {
+            font-size: 9px;
+            color: var(--text-muted);
+        }
+
+        .strip-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            justify-self: center;
+        }
+
+        .strip-status.moving { background: var(--color-redis); box-shadow: 0 0 6px rgba(34,197,94,0.5); }
+        .strip-status.slow { background: var(--color-processor); box-shadow: 0 0 6px rgba(245,158,11,0.5); }
+        .strip-status.stopped { background: var(--color-breach); box-shadow: 0 0 6px rgba(239,68,68,0.5); }
+
+        /* ================================================================
+           Connection Status Banner
+           ================================================================ */
+        #connection-banner {
+            display: none;
+            position: fixed;
+            top: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 8px;
+            padding: 8px 20px;
+            font-size: 12px;
+            color: var(--color-breach);
+            font-family: var(--font-mono);
+            z-index: 200;
+            backdrop-filter: blur(12px);
+        }
+    </style>
+</head>
+<body>
+    <!-- Top Bar -->
+    <div class="top-bar">
+        <h1>
+            <span class="icon">⚡</span>
+            Data Flow Visualiser
+        </h1>
+        <span class="uptime" id="uptime-display">Uptime: —</span>
+        <a href="index.html" class="back-link">← Back to Dashboard</a>
+    </div>
+
+    <!-- Connection banner -->
+    <div id="connection-banner">⚠ Disconnected from API — retrying...</div>
+
+    <!-- Pipeline Visualization (Canvas) -->
+    <div id="pipeline-section">
+        <canvas id="pipeline-canvas"></canvas>
+    </div>
+
+    <!-- Vehicle Activity Strips -->
+    <div id="activity-section">
+        <div class="section-title">Vehicle Activity</div>
+        <div id="vehicle-strips"></div>
+    </div>
+
+    <!-- Geofence Breach Panel -->
+    <div id="breach-section">
+        <div class="breach-title">🚨 Geofence Breaches</div>
+        <div id="breach-cards"></div>
+    </div>
+
+    <script>
+        // ==================================================================
+        // Configuration
+        // ==================================================================
+        const API_BASE = 'http://localhost:8000';
+        const WS_URL = 'ws://localhost:8000/ws/live';
+
+        // Pipeline node definitions (left-to-right order)
+        const PIPELINE_NODES = [
+            { id: 'vehicles',   label: 'Vehicles',    color: '#2dd4bf', statKey: 'active_vehicles',    statLabel: 'active',     statSuffix: '' },
+            { id: 'mqtt',       label: 'MQTT Broker',  color: '#3b82f6', statKey: 'pings_per_sec',     statLabel: 'msg/sec',    statSuffix: '' },
+            { id: 'kafka',      label: 'Kafka',        color: '#8b5cf6', statKey: 'kafka_lag',          statLabel: 'lag',        statSuffix: '' },
+            { id: 'processor',  label: 'Processor',    color: '#f59e0b', statKey: 'processed_total',    statLabel: 'processed',  statSuffix: '' },
+            { id: 'redis',      label: 'Redis',        color: '#22c55e', statKey: 'redis_vehicle_keys', statLabel: 'live keys',  statSuffix: '' },
+            { id: 'timescale',  label: 'TimescaleDB',  color: '#22c55e', statKey: 'db_total_rows',      statLabel: 'rows',       statSuffix: '' },
+            { id: 'api',        label: 'API',          color: '#f97316', statKey: 'ws_clients',         statLabel: 'WS clients', statSuffix: '' },
+            { id: 'dashboard',  label: 'Dashboard',    color: '#f97316', statKey: null,                 statLabel: 'live',       statSuffix: '' },
+        ];
+
+        // ==================================================================
+        // State
+        // ==================================================================
+        let systemStats = {};
+        let vehicleData = {};       // { vid: { spd, hdg, ign, ... } }
+        let speedHistory = {};      // { vid: [last 60 speeds] }
+        let particles = [];         // { x, y, color, progress, speed }
+        let breaches = [];
+        let lastBreachCount = 0;
+        let isConnected = false;
+        let lastDataTime = Date.now();
+
+        // Vehicle colors
+        const VEHICLE_COLORS = [
+            '#2dd4bf', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444',
+            '#22c55e', '#f97316', '#ec4899', '#06b6d4', '#84cc16',
+            '#a78bfa', '#fb923c', '#34d399', '#f472b6', '#38bdf8',
+            '#facc15', '#c084fc', '#4ade80', '#fb7185', '#67e8f9',
+        ];
+
+        function getVehicleColor(vid) {
+            const idx = parseInt(vid.replace('V', '')) - 1;
+            return VEHICLE_COLORS[idx % VEHICLE_COLORS.length];
+        }
+
+        // ==================================================================
+        // Pipeline Canvas Rendering
+        // ==================================================================
+        const canvas = document.getElementById('pipeline-canvas');
+        const ctx = canvas.getContext('2d');
+        let nodePositions = []; // [{x, y, w, h}]
+
+        function resizeCanvas() {
+            const section = document.getElementById('pipeline-section');
+            canvas.width = section.clientWidth;
+            canvas.height = 200;
+        }
+
+        function drawPipeline() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const numNodes = PIPELINE_NODES.length;
+            const padding = 30;
+            const totalWidth = canvas.width - padding * 2;
+            const nodeW = 100;
+            const nodeH = 70;
+            const gapX = (totalWidth - nodeW * numNodes) / (numNodes - 1);
+            const cy = canvas.height / 2;
+            nodePositions = [];
+
+            // Draw connecting lines first
+            for (let i = 0; i < numNodes - 1; i++) {
+                const x1 = padding + i * (nodeW + gapX) + nodeW;
+                const x2 = padding + (i + 1) * (nodeW + gapX);
+
+                // Special fork for Processor → Redis + TimescaleDB
+                const isStorageFork = PIPELINE_NODES[i].id === 'processor';
+                const isStorageMerge = PIPELINE_NODES[i].id === 'timescale';
+
+                ctx.beginPath();
+                ctx.moveTo(x1, cy);
+                ctx.lineTo(x2, cy);
+                ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Arrow head
+                const arrowSize = 6;
+                const ax = x2 - 4;
+                ctx.beginPath();
+                ctx.moveTo(ax, cy - arrowSize);
+                ctx.lineTo(ax + arrowSize, cy);
+                ctx.lineTo(ax, cy + arrowSize);
+                ctx.fillStyle = 'rgba(255,255,255,0.1)';
+                ctx.fill();
+            }
+
+            // Draw nodes
+            for (let i = 0; i < numNodes; i++) {
+                const node = PIPELINE_NODES[i];
+                const x = padding + i * (nodeW + gapX);
+                const y = cy - nodeH / 2;
+
+                nodePositions.push({ x, y, w: nodeW, h: nodeH });
+
+                // Check if data is flowing (glow effect)
+                const dataAge = (Date.now() - lastDataTime) / 1000;
+                const glowIntensity = dataAge < 3 ? 0.35 : 0.05;
+
+                // Glow
+                ctx.shadowColor = node.color;
+                ctx.shadowBlur = dataAge < 3 ? 15 : 2;
+
+                // Rounded rectangle
+                const r = 10;
+                ctx.beginPath();
+                ctx.roundRect(x, y, nodeW, nodeH, r);
+                ctx.fillStyle = 'rgba(18, 18, 26, 0.95)';
+                ctx.fill();
+                ctx.strokeStyle = node.color + (dataAge < 3 ? '80' : '30');
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                ctx.shadowBlur = 0;
+
+                // Label
+                ctx.fillStyle = node.color;
+                ctx.font = '600 11px "JetBrains Mono", monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(node.label, x + nodeW / 2, y + 22);
+
+                // Stat value
+                let statVal = '—';
+                if (node.statKey && systemStats[node.statKey] !== undefined) {
+                    const val = systemStats[node.statKey];
+                    statVal = typeof val === 'number' ? (val > 9999 ? (val / 1000).toFixed(1) + 'k' : val.toString()) : val;
+                } else if (node.id === 'dashboard') {
+                    statVal = isConnected ? '✓' : '—';
+                }
+
+                ctx.fillStyle = '#e8e8ed';
+                ctx.font = '700 16px "JetBrains Mono", monospace';
+                ctx.fillText(statVal, x + nodeW / 2, y + 42);
+
+                // Stat label
+                ctx.fillStyle = '#555566';
+                ctx.font = '400 9px "JetBrains Mono", monospace';
+                ctx.fillText(node.statLabel, x + nodeW / 2, y + 58);
+            }
+
+            // Draw particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.progress += p.speed;
+
+                if (p.progress >= 1) {
+                    particles.splice(i, 1);
+                    continue;
+                }
+
+                // Interpolate position across pipeline
+                const totalLen = nodePositions[nodePositions.length - 1].x + nodePositions[nodePositions.length - 1].w - nodePositions[0].x;
+                const px = nodePositions[0].x + p.progress * totalLen;
+                const py = cy;
+
+                // Fade at end
+                const alpha = p.progress > 0.85 ? (1 - p.progress) / 0.15 : 1;
+
+                ctx.beginPath();
+                ctx.arc(px, py, 3, 0, Math.PI * 2);
+                ctx.fillStyle = p.color + Math.round(alpha * 200).toString(16).padStart(2, '0');
+                ctx.fill();
+
+                // Trailing glow
+                ctx.beginPath();
+                ctx.arc(px, py, 6, 0, Math.PI * 2);
+                ctx.fillStyle = p.color + Math.round(alpha * 40).toString(16).padStart(2, '0');
+                ctx.fill();
+            }
+        }
+
+        function spawnParticle(color) {
+            particles.push({
+                progress: 0,
+                speed: 0.003 + Math.random() * 0.002,
+                color: color,
+            });
+        }
+
+        // ==================================================================
+        // Sparkline Drawing (per-vehicle Canvas)
+        // ==================================================================
+        function drawSparkline(canvasEl, data, color) {
+            const sCtx = canvasEl.getContext('2d');
+            const w = canvasEl.width;
+            const h = canvasEl.height;
+            sCtx.clearRect(0, 0, w, h);
+
+            if (data.length < 2) return;
+
+            const max = Math.max(...data, 60);
+            const min = 0;
+            const range = max - min || 1;
+
+            // Gradient fill
+            const grad = sCtx.createLinearGradient(0, 0, 0, h);
+            grad.addColorStop(0, color + '30');
+            grad.addColorStop(1, color + '00');
+
+            // Line
+            sCtx.beginPath();
+            for (let i = 0; i < data.length; i++) {
+                const x = (i / (data.length - 1)) * w;
+                const y = h - ((data[i] - min) / range) * (h - 4) - 2;
+                if (i === 0) sCtx.moveTo(x, y);
+                else sCtx.lineTo(x, y);
+            }
+            sCtx.strokeStyle = color;
+            sCtx.lineWidth = 1.5;
+            sCtx.stroke();
+
+            // Fill under line
+            sCtx.lineTo(w, h);
+            sCtx.lineTo(0, h);
+            sCtx.closePath();
+            sCtx.fillStyle = grad;
+            sCtx.fill();
+        }
+
+        // ==================================================================
+        // Update Vehicle Strips
+        // ==================================================================
+        function updateVehicleStrips() {
+            const container = document.getElementById('vehicle-strips');
+            const vids = Object.keys(vehicleData).sort();
+
+            if (container.children.length !== vids.length) {
+                // Rebuild
+                let html = '';
+                for (const vid of vids) {
+                    const color = getVehicleColor(vid);
+                    html += `
+                        <div class="vehicle-strip" id="strip-${vid}">
+                            <div class="strip-vid" style="color:${color}">${vid}</div>
+                            <canvas class="strip-sparkline" id="sparkline-${vid}" width="300" height="28"></canvas>
+                            <div class="strip-speed" id="speed-${vid}">— <span class="unit">km/h</span></div>
+                            <div class="strip-status" id="status-${vid}"></div>
+                        </div>`;
+                }
+                container.innerHTML = html;
+            }
+
+            // Update each strip
+            for (const vid of vids) {
+                const v = vehicleData[vid];
+                const color = getVehicleColor(vid);
+
+                // Speed
+                const speedEl = document.getElementById(`speed-${vid}`);
+                if (speedEl) speedEl.innerHTML = `${v.spd.toFixed(0)} <span class="unit">km/h</span>`;
+
+                // Status dot
+                const statusEl = document.getElementById(`status-${vid}`);
+                if (statusEl) {
+                    if (!v.ign || v.spd === 0) statusEl.className = 'strip-status stopped';
+                    else if (v.spd < 25) statusEl.className = 'strip-status slow';
+                    else statusEl.className = 'strip-status moving';
+                }
+
+                // Sparkline
+                const sparkCanvas = document.getElementById(`sparkline-${vid}`);
+                if (sparkCanvas && speedHistory[vid]) {
+                    drawSparkline(sparkCanvas, speedHistory[vid], color);
+                }
+            }
+        }
+
+        // ==================================================================
+        // Breach Cards (Transient Toasts)
+        // ==================================================================
+        const PROCESSED_BREACHES = new Set();
+        
+        function updateBreachCards() {
+            if (!breaches || breaches.length === 0) return;
+            
+            const container = document.getElementById('breach-cards');
+            const now = Date.now();
+            
+            Array.from(container.children).forEach(card => {
+                const tsStr = card.dataset.ts;
+                if (tsStr) {
+                    const elapsed = now - new Date(tsStr).getTime();
+                    if (elapsed > 8000) {
+                        card.style.opacity = '0';
+                        card.style.transform = 'scale(0.95)';
+                        setTimeout(() => { if (card.parentNode) card.remove(); }, 300);
+                    }
+                }
+            });
+            
+            breaches.slice(0, 10).reverse().forEach(b => {
+                const id = b.vid + b.ts;
+                const elapsed = now - new Date(b.ts).getTime();
+                
+                if (elapsed <= 8000 && !PROCESSED_BREACHES.has(id)) {
+                    PROCESSED_BREACHES.add(id);
+                    
+                    const card = document.createElement('div');
+                    card.className = 'breach-card flash';
+                    card.dataset.ts = b.ts;
+                    card.innerHTML = `
+                        <span class="breach-vid">${b.vid}</span>
+                        ${b.event} <strong>${b.zone}</strong>
+                        <div class="breach-time">${new Date(b.ts).toLocaleTimeString()}</div>
+                    `;
+                    container.prepend(card);
+                }
+            });
+        }
+
+        // ==================================================================
+        // Fetch System Stats
+        // ==================================================================
+        async function fetchStats() {
+            try {
+                const res = await fetch(`${API_BASE}/system/stats`);
+                if (res.ok) {
+                    systemStats = await res.json();
+                    isConnected = true;
+                    document.getElementById('connection-banner').style.display = 'none';
+
+                    // Uptime display
+                    const secs = systemStats.uptime_seconds || 0;
+                    const h = Math.floor(secs / 3600);
+                    const m = Math.floor((secs % 3600) / 60);
+                    const s = secs % 60;
+                    document.getElementById('uptime-display').textContent =
+                        `Uptime: ${h}h ${m}m ${s}s`;
+                }
+            } catch (e) {
+                isConnected = false;
+                document.getElementById('connection-banner').style.display = 'block';
+            }
+        }
+
+        // ==================================================================
+        // WebSocket — receive live vehicle data
+        // ==================================================================
+        let ws = null;
+
+        function connectWebSocket() {
+            ws = new WebSocket(WS_URL);
+
+            ws.onopen = () => {
+                console.log('[DataFlow WS] Connected');
+                isConnected = true;
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'positions') {
+                    lastDataTime = Date.now();
+
+                    for (const v of data.vehicles) {
+                        vehicleData[v.vid] = v;
+
+                        // Add to speed history (keep 60 samples)
+                        if (!speedHistory[v.vid]) speedHistory[v.vid] = [];
+                        speedHistory[v.vid].push(v.spd);
+                        if (speedHistory[v.vid].length > 60) speedHistory[v.vid].shift();
+
+                        // Spawn particle for visual effect
+                        spawnParticle(getVehicleColor(v.vid));
+                    }
+
+                    // Breaches
+                    if (data.breaches) {
+                        breaches = data.breaches;
+                        updateBreachCards();
+                    }
+
+                    updateVehicleStrips();
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('[DataFlow WS] Disconnected, reconnecting in 3s...');
+                isConnected = false;
+                document.getElementById('connection-banner').style.display = 'block';
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            ws.onerror = () => ws.close();
+        }
+
+        // ==================================================================
+        // Main Loop
+        // ==================================================================
+        function animate() {
+            drawPipeline();
+            requestAnimationFrame(animate);
+        }
+
+        // Initialisation
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        connectWebSocket();
+        fetchStats();
+        setInterval(fetchStats, 5000);
+        animate();
+    </script>
+</body>
+</html>

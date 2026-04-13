@@ -1,0 +1,26 @@
+# ============================================================================
+# requirements.txt — All Python dependencies for the Fleet Tracker
+# ============================================================================
+# Install with: pip install -r requirements.txt
+# Python 3.11+ required
+# ============================================================================
+
+# MQTT — paho-mqtt for vehicle simulator and MQTT bridge
+paho-mqtt>=1.6.1,<2.0
+
+# Kafka — confluent-kafka (wraps librdkafka for high performance)
+confluent-kafka>=2.3.0
+
+# Redis — async Redis client for FastAPI, sync for processor
+redis>=5.0.0
+
+# PostgreSQL — asyncpg for FastAPI (async), psycopg2 for processor (sync)
+asyncpg>=0.29.0
+psycopg2-binary>=2.9.9
+
+# Geofencing — Shapely for point-in-polygon checks
+shapely>=2.0.0
+
+# Web framework — FastAPI + Uvicorn
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0

@@ -1,0 +1,131 @@
+You are a senior distributed systems engineer. Build me a complete, fully runnable prototype of a Distributed Spatio-Temporal Fleet Tracker for a B.Tech capstone. Everything must work out of the box with minimal setup.
+What to build
+A real-time fleet tracking system with these components, all in a single repo:
+1. Infrastructure (docker-compose.yml)
+Spin up: Mosquitto (MQTT broker), Kafka + Zookeeper, Redis, TimescaleDB (Postgres + TimescaleDB extension). Expose all necessary ports. Include a health check for each service.
+2. Vehicle Simulator (simulator/simulate.py)
+
+Spawn 20 vehicles as threads, each moving around Mumbai (lat ~19.07, lng ~72.87)
+Each vehicle emits a JSON ping every 1 second to MQTT topic fleet/demo/vehicle/{vid}/location
+Payload: {vid, fid, ts, lat, lng, spd, hdg, acc, ign, seq}
+Simulate realistic movement: smooth heading drift, speed variation 20–60 km/h, occasional stops (ign=false)
+
+3. Kafka Bridge (bridge/mqtt_to_kafka.py)
+
+Subscribe to fleet/demo/# on Mosquitto
+Forward every ping as a Kafka message to topic fleet-telemetry
+Partition key = vehicle_id
+Use confluent-kafka library
+
+4. Stream Processor (processor/consumer.py)
+
+Consume fleet-telemetry from Kafka
+For each ping:
+
+Write live position to Redis as vehicle:{vid} (hash, TTL 60s)
+Write full ping to TimescaleDB table telemetry (hypertable on ts)
+Check if vehicle entered/exited a hardcoded geofence polygon (use shapely)
+Print geofence breach alerts to stdout
+
+
+
+5. TimescaleDB Schema (db/schema.sql)
+sql-- Auto-run on startup
+CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE TABLE telemetry (
+  ts        TIMESTAMPTZ NOT NULL,
+  vid       TEXT NOT NULL,
+  fid       TEXT,
+  lat       DOUBLE PRECISION,
+  lng       DOUBLE PRECISION,
+  spd       REAL,
+  hdg       REAL,
+  acc       REAL,
+  ign       BOOLEAN,
+  seq       INTEGER
+);
+SELECT create_hypertable('telemetry', 'ts');
+CREATE INDEX ON telemetry (vid, ts DESC);
+6. FastAPI Backend (api/main.py)
+Endpoints:
+
+GET /vehicles → return all live positions from Redis (all vehicle:* keys)
+GET /vehicles/{vid}/history?minutes=30 → query TimescaleDB for last N minutes of pings
+GET /vehicles/{vid}/stats → avg speed, max speed, distance covered (last 30 min, from TimescaleDB)
+WebSocket /ws/live → push all vehicle positions from Redis every 1 second to connected clients
+
+7. Frontend (frontend/index.html)
+Single HTML file, no build step, no frameworks:
+
+Leaflet.js map with CartoDB Dark Matter tiles centred on Mumbai (100% free, no sign-up, no API key required)
+Connects to ws://localhost:8000/ws/live via WebSocket
+Renders each vehicle as a moving marker with a directional SVG arrow (use heading)
+Vehicle popup on click: shows vid, speed, heading, last seen
+Sidebar showing list of all vehicles with live speed
+Geofence polygon drawn on the map
+
+8. requirements.txt for each service and a root README.md with:
+
+docker-compose up -d to start infra
+pip install -r requirements.txt && python simulate.py for each service
+Expected output at each step
+Screenshot description of what the dashboard looks like when running
+
+Constraints
+
+Python 3.11+
+Use paho-mqtt for MQTT, confluent-kafka for Kafka, asyncpg for Postgres, redis-py, shapely for geofencing, fastapi + uvicorn for API
+No Flink (too heavy for a prototype) — Kafka consumer does the processing directly
+All config (broker URLs, ports, credentials) via environment variables with sensible defaults
+Each Python file must be self-contained and runnable independently
+Add time.sleep retry loops so services wait for infra to be ready (no crash on startup)
+Include inline comments explaining why each design decision was made (for the capstone report)
+
+Output format
+Output every file completely. Use this structure:
+docker-compose.yml
+simulator/simulate.py
+bridge/mqtt_to_kafka.py
+processor/consumer.py
+db/schema.sql
+api/main.py
+frontend/index.html
+requirements.txt
+README.md
+Do not truncate any file. Do not say "add the rest yourself." Every file must be production-complete.
+
+9. Data Flow Visualizer (frontend/dataflow.html)
+A second HTML page (link it from the main dashboard) that shows the live data pipeline in action — not a static diagram, but an animated visualization of real data moving through the system.
+Layout: Pipeline runs left-to-right across the screen:
+[Vehicles] → [MQTT Broker] → [Kafka] → [Processor] → [Redis] [TimescaleDB] → [API] → [Dashboard]
+For each layer, show live stats pulled from GET /system/stats (add this endpoint — see below):
+
+Vehicles: count of active vehicles, pings/sec being emitted
+MQTT: messages/sec through broker
+Kafka: consumer lag, messages/sec
+Processor: pings processed/sec, geofence breaches count
+Redis: number of live vehicle keys
+TimescaleDB: total rows ingested, rows/sec
+API: connected WebSocket clients
+
+Animated particles: When a ping flows through the pipeline, show a small dot animating left-to-right along the pipeline path. Particle color = vehicle color. Spawn one particle per real ping received. Particles travel at a fixed speed and fade out when they reach the dashboard end. This makes it viscerally obvious that data is flowing in real time.
+Geofence breach panel: Bottom-right corner. Every time a geofence breach is detected, a card slides in: [vehicle id] entered/exited [zone name] at [timestamp]. Keep last 10 breaches visible. Red flash on the breach event.
+Per-vehicle activity strip: Below the pipeline, one horizontal row per vehicle. Each row has the vehicle ID, a sparkline of speed over last 60 seconds (draw with Canvas, 60 data points, update every second), current speed as a number, and a colored status dot (green=moving, amber=slow, red=stopped).
+Add this endpoint to api/main.py:
+GET /system/stats
+Returns:
+json{
+  "active_vehicles": 18,
+  "pings_per_sec": 18.0,
+  "kafka_lag": 0,
+  "processed_total": 48291,
+  "geofence_breaches": 7,
+  "redis_vehicle_keys": 18,
+  "db_total_rows": 48291,
+  "db_rows_per_sec": 18.0,
+  "ws_clients": 2,
+  "uptime_seconds": 2681
+}
+Track these counters in-memory in the FastAPI process (use a global dict with a background task updating rows/sec every 5 seconds via a SELECT COUNT(*) on TimescaleDB).
+Styling: Dark background (#0a0a0f). Pipeline nodes are rounded rectangles with a subtle glow when data is actively flowing through them. Glow dims if no data for >3 seconds — visually shows a stalled stage. Use monospace font for all numbers. Color-code layers: vehicles=teal, broker=blue, kafka=purple, processor=amber, storage=green, API+dashboard=coral.
+No frameworks, no build step — vanilla JS + Canvas only. Must work by opening the HTML file directly (or via a simple python -m http.server).
